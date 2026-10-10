@@ -92,7 +92,12 @@ def main():
               "--no-enable-unittests", "--no-build-embedder-examples"]
     run("python3", "flutter/tools/gn", "--android", "--android-cpu=arm64",
         "--target-dir=android_release_arm64", *common, cwd=src, env=env)
-    run(depot / "ninja", "-C", "out/android_release_arm64", "-j", "2",
+    # Use the distribution Ninja installed by the workflow. The depot_tools
+    # wrapper requires a separate Python bootstrap even after gclient succeeds.
+    ninja = Path("/usr/bin/ninja")
+    if not ninja.is_file():
+        raise RuntimeError("The workflow must install the distribution Ninja")
+    run(ninja, "-C", "out/android_release_arm64", "-j", "2",
         "flutter/shell/platform/android:android_jar", "clang_x64/gen_snapshot",
         "flutter/lib/snapshot:generate_snapshot_bins", cwd=src, env=env)
     target = src / "out/android_release_arm64"
@@ -105,7 +110,7 @@ def main():
         raise RuntimeError("Rebuilt packaged engine failed strict ARM64 LOAD/RELRO check")
     run("python3", "flutter/tools/gn", "--target-dir=host_release",
         "--prebuilt-dart-sdk", *common, cwd=src, env=env)
-    run(depot / "ninja", "-C", "out/host_release", "-j", "2",
+    run(ninja, "-C", "out/host_release", "-j", "2",
         "flutter/build/archives:flutter_patched_sdk", "flutter/sky",
         "flutter/tools/font_subset", "flutter/tools/const_finder",
         "flutter/flutter_frontend_server:frontend_server", cwd=src, env=env)
@@ -134,6 +139,11 @@ def main():
                 (host / "font-subset", "out/host_release/font-subset"),
                 (host / "gen/dart-pkg/sky_engine/LICENSE", "THIRD_PARTY_NOTICES"),
                 (checkout / "LICENSE", "LICENSE")]
+    # Flutter's supported local-engine integration also needs these Maven files.
+    for artifact in ("flutter_embedding_release", "arm64_v8a_release"):
+        for suffix in ("jar", "pom", "maven-metadata.xml"):
+            name = f"{artifact}.{suffix}"
+            selected.append((target / name, f"out/android_release_arm64/{name}"))
     for item, _ in selected:
         if not item.exists():
             raise RuntimeError(f"Required local-engine output missing: {item.name}")
