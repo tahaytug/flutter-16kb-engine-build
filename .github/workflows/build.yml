@@ -1,0 +1,47 @@
+name: Build pinned Flutter ARM64 engine with 16 KB RELRO
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: flutter-16kb-engine
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prepare the disposable standard runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          # Only preinstalled tools on this fresh disposable runner; not user files.
+          for path in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; do
+            test ! -L "$path"
+            sudo rm -rf -- "$path"
+          done
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pkg-config libgtk-3-dev libglu1-mesa-dev libx11-dev libxi-dev libxrandr-dev libxcursor-dev libxinerama-dev libfontconfig1-dev libfreetype6-dev libasound2-dev libnss3-dev libdrm-dev libgbm-dev curl unzip python3 git ninja-build
+          df -h "$RUNNER_TEMP"
+      - name: Build and verify the pinned public engine
+        run: python3 -u build_engine.py --root "$RUNNER_TEMP/flutter-16kb-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Publish only verified engine outputs to this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          path="$RUNNER_TEMP/flutter-16kb-${{ github.run_id }}-${{ github.run_attempt }}/delivery"
+          gh release create "engine-${{ github.run_id }}-${{ github.run_attempt }}" \
+            "$path/flutter-06a2e2a-arm64-16kb-linux.tar.gz" "$path/provenance.json" "$path/SHA256SUMS" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Pinned Flutter engine: static 16 KB checks passed" \
+            --notes "Public Flutter engine only. App code and credentials are excluded. Static LOAD/RELRO checks passed; application packaging and 16 KB runtime still require separate validation."
