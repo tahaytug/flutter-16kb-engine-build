@@ -1,0 +1,30 @@
+name: Android 16 KB environment preflight
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  environment:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Start official 16 KB emulator and verify actual page size
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          test -c /dev/kvm
+          sudo chown "$(id -u):$(id -g)" /dev/kvm
+          sdkmanager --install 'system-images;android-35;google_apis_ps16k;x86_64'
+          printf 'no\n' | avdmanager create avd --name qa16k --package 'system-images;android-35;google_apis_ps16k;x86_64' --force
+          emulator -avd qa16k -no-window -noaudio -no-snapshot -no-boot-anim -gpu swiftshader -memory 2048 -cores 2 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'adb emu kill >/dev/null 2>&1 || true; kill "$emulator_pid" >/dev/null 2>&1 || true' EXIT
+          timeout 480 bash -c 'until adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r" | grep -qx 1; do sleep 5; done'
+          page_size="$(adb shell getconf PAGE_SIZE | tr -d '\r')"
+          test "$page_size" = 16384
+          api="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+          abi="$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+          printf 'PAGE_SIZE=%s API=%s ABI=%s\n' "$page_size" "$api" "$abi"
+          printf 'Verified official emulator environment: PAGE_SIZE=%s, API=%s, ABI=%s.\n\nNo application APK, source, signing key, account, or user data was uploaded. This is an environment preflight, not Yansima runtime acceptance.\n' "$page_size" "$api" "$abi" >> "$GITHUB_STEP_SUMMARY"
